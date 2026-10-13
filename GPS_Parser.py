@@ -32,15 +32,14 @@ class Parser(sen.Sensors):
         self.sensors = collections.deque()
         self.connection_mgr = cn.Connection(self.port)
 
-        self.old, self.current = pynmea2.datetime.time(0, 0, 0), pynmea2.datetime.time(0, 0, 1)
+        self.current = pynmea2.datetime.time(0, 0, 1)
 
         self.new_frame = sen.Sensors()
 
     def get_data(self, l):
-        l.acquire()
-        fix_data = copy.copy(self.frames)
+        with l:
+            fix_data = copy.copy(self.frames)
         # traceback.print_exc()
-        l.release()
         # Remove the current working frame (new_frame) since it contains incomplete data.
         if fix_data:
             fix_data.popleft()
@@ -84,15 +83,13 @@ class Parser(sen.Sensors):
         """Create a new frame, make it the current one and trim the queue to its size limit."""
         logging.debug(f'A New frame {len(self.frames)}')
         self.new_frame = sen.Sensors()
-        l.acquire()
-        self.frames.appendleft(self.new_frame)
-        l.release()
+        with l:
+            self.frames.appendleft(self.new_frame)
 
         if len(self.frames) > self.NUMQUEELEMENTS:
             logging.debug('popping')
-            l.acquire()
-            self.frames.pop()
-            l.release()
+            with l:
+                self.frames.pop()
 
     def parser_gps(self, l):
         """
@@ -134,13 +131,12 @@ class Parser(sen.Sensors):
                         # Cellphone insert own messages. Eleminate these sentences
                         if not any(msg_nmea_str.find(s) >= 0 for s in self.new_frame.NMEA_IGNORE_PREFIXES):
                             parser = pynmea2.parse(msg_nmea_str)
-                            print('parser: ', parser.name_to_idx)
+                            logging.debug(f'parser: {parser.name_to_idx}')
                             ident = parser.identifier().strip(',')  # Use the identifier to chose GPS or GLONASS
 
                             if (type(parser) in (pynmea2.types.talker.RMC, pynmea2.types.talker.GGA)
                                     and self._is_new_epoch(parser.timestamp)):
                                 self._start_frame(l)
-                                self.old = self.current
                                 self.current = parser.timestamp
                                 self.new_frame.set_time(parser)
 
@@ -191,7 +187,7 @@ class Parser(sen.Sensors):
                     n = n + 4  # update substring position here
 
                     if len(self.sensors) > 0:
-                        print("Data!")
+                        logging.debug("Data!")
 
         except (KeyboardInterrupt, SystemExit):
             raise
