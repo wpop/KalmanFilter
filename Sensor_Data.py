@@ -42,6 +42,8 @@ class Sensors:
         self.latitude = []            # latitude
         # self.lat_dir = None              # latitude direction
         self.longitude = None            # longitude
+        self.latitude_deg = None         # latitude in signed decimal degrees (south is negative)
+        self.longitude_deg = None        # longitude in signed decimal degrees (west is negative)
         # self.lon_dir = None              # longitude direction
         self.num_satellites = None       # Number of satellites being tracked
         self.pdop = None                 # Dilution of position
@@ -92,11 +94,13 @@ class Sensors:
         self.date = msg.datestamp
 
     def set_latitude(self, msg):
+        self.latitude_deg = msg.latitude
         self.latitude = '%02d°%02d′%07.4f″%s' % (msg.latitude,
                                                msg.latitude_minutes, msg.latitude_seconds, msg.lat_dir)
 
     def set_longitude(self, msg):
         """Extract Longitude"""
+        self.longitude_deg = msg.longitude
         self.longitude = '%02d°%02d′%07.4f″%s' % (msg.longitude,
                                                 msg.longitude_minutes, msg.longitude_seconds, msg.lon_dir)
 
