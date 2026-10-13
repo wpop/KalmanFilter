@@ -6,7 +6,6 @@ import logging
 # from threading import Thread
 from multiprocessing import Process, Lock
 
-import IMU_GPS_Data as data
 import GPS_Parser as prs
 
 queue = queue.Queue(2)  # Global queue
@@ -25,7 +24,6 @@ class Rover:
         self.msg = None
         self.time = None
         self.name = name
-        self.rover = data.Sensors()
         self.parser = prs.Parser(self.port)
         self.object = []
 
@@ -95,7 +93,6 @@ class Stationary:
         self.msg =  None
         self.time = None
         self.name = name
-        self.base = data.Sensors()
         self.parser = prs.Parser(self.port)
         self.object = []
 
