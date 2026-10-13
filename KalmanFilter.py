@@ -1,5 +1,4 @@
 import numpy as np
-import geohash2
 import queue
 import time
 import logging
@@ -276,6 +275,9 @@ def read_rover(l):
 
 
 if __name__ == "__main__":
+    # Imported lazily: geohash2 is only needed for this debug print and may fail to build
+    import geohash2
+
     print('Geohash for 42.6, -5.6:', geohash2.encode(37.571309, 55.767190))
 
     lock_b = Lock()
