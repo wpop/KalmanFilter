@@ -79,6 +79,15 @@ class Parser(sen.Sensors):
         """True if a sentence timestamp differs from the one of the current frame."""
         return timestamp is not None and (not self.frames or timestamp != self.current)
 
+    def _append_imu_sample(self, samples, kind, packet_time, values):
+        """Append an ImuSample to the list; log a warning and skip it if a value is not numeric."""
+        try:
+            x, y, z = (float(v) for v in values)
+        except ValueError:
+            logging.warning(f'Skipping {kind} sample with non-numeric values {values}')
+            return
+        samples.append(sen.ImuSample(packet_time, x, y, z))
+
     def _start_frame(self, l):
         """Create a new frame, make it the current one and trim the queue to its size limit."""
         logging.debug(f'A New frame {len(self.frames)}')
@@ -171,18 +180,24 @@ class Parser(sen.Sensors):
                         self.new_frame.acceleration_x = a[0]
                         self.new_frame.acceleration_y = a[1]
                         self.new_frame.acceleration_z = a[2]
+                        self._append_imu_sample(self.new_frame.accel_samples, 'accelerometer',
+                                                msg_list[0], a)
 
                     if 4 == int(msg_list[n]):
                         g = msg_list[n + 1:n + 4]
                         self.new_frame.gyr_x = g[0]
                         self.new_frame.gyr_y = g[1]
                         self.new_frame.gyr_z = g[2]
+                        self._append_imu_sample(self.new_frame.gyro_samples, 'gyroscope',
+                                                msg_list[0], g)
 
                     if 5 == int(msg_list[n]):
                         m = msg_list[n + 1:n + 4]
                         self.new_frame.dir_x = m[0]
                         self.new_frame.dir_y = m[1]
                         self.new_frame.dir_z = m[2]
+                        self._append_imu_sample(self.new_frame.mag_samples, 'magnetometer',
+                                                msg_list[0], m)
 
                     n = n + 4  # update substring position here
 

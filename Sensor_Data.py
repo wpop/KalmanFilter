@@ -4,7 +4,18 @@
 import datetime
 import re
 import copy
+from dataclasses import dataclass
 #from datetime import tzinfo
+
+
+@dataclass(frozen=True)
+class ImuSample:
+    """A single IMU reading (accelerometer, gyroscope or magnetometer)."""
+
+    packet_time: str  # first field of the UDP packet, kept as received
+    x: float
+    y: float
+    z: float
 
 
 class Sensors:
@@ -21,6 +32,9 @@ class Sensors:
         self.dir_x = 0.0                # Direction to Magnetic Pole through X-axes
         self.dir_y = None
         self.dir_z = None
+        self.accel_samples = []         # every accelerometer reading of the frame, in arrival order
+        self.gyro_samples = []          # every gyroscope reading of the frame
+        self.mag_samples = []           # every magnetometer reading of the frame
 
         self.nmea_msg = None             # Read NMEA message. In our application we use ';' to separate values.
         self.date = None
