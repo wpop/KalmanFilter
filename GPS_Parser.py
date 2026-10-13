@@ -1,5 +1,4 @@
 import collections
-import traceback
 import pynmea2
 # import threading
 import time
@@ -33,17 +32,17 @@ class Parser(sen.Sensors):
         self.sensors = collections.deque()
         self.connection_mgr = cn.Connection(self.port)
 
-        self.old, self.current = pynmea2.datetime.time(0, 0, 0), pynmea2.datetime.time(0, 0, 1)
+        self.current = pynmea2.datetime.time(0, 0, 1)
 
         self.new_frame = sen.Sensors()
 
     def get_data(self, l):
-        l.acquire()
-        fix_data = copy.copy(self.frames)
+        with l:
+            fix_data = copy.copy(self.frames)
         # traceback.print_exc()
-        l.release()
         # Remove the current working frame (new_frame) since it contains incomplete data.
-        fix_data.popleft()
+        if fix_data:
+            fix_data.popleft()
         logging.debug(f'Get Data? {len(self.frames)}')
         return fix_data
 
@@ -76,27 +75,48 @@ class Parser(sen.Sensors):
                 f'end deque indx {indx} : port {self.port} <--------------------------------\n'
             print(s)
 
+    def _is_new_epoch(self, timestamp):
+        """True if a sentence timestamp differs from the one of the current frame."""
+        return timestamp is not None and (not self.frames or timestamp != self.current)
+
+    def _append_imu_sample(self, samples, kind, packet_time, values):
+        """Append an ImuSample to the list; log a warning and skip it if a value is not numeric."""
+        try:
+            x, y, z = (float(v) for v in values)
+        except ValueError:
+            logging.warning(f'Skipping {kind} sample with non-numeric values {values}')
+            return
+        samples.append(sen.ImuSample(packet_time, x, y, z))
+
+    def _start_frame(self, l):
+        """Create a new frame, make it the current one and trim the queue to its size limit."""
+        logging.debug(f'A New frame {len(self.frames)}')
+        self.new_frame = sen.Sensors()
+        with l:
+            self.frames.appendleft(self.new_frame)
+
+        if len(self.frames) > self.NUMQUEELEMENTS:
+            logging.debug('popping')
+            with l:
+                self.frames.pop()
+
     def parser_gps(self, l):
-        """from NMEA-message we extract a new date time and creates a new IMU object"""
+        """
+        Receive one UDP packet and write its sentences and IMU values into the current frame.
+
+        Assumption: a frame starts with the first sentence that carries a timestamp (RMC or GGA)
+        that differs from the timestamp of the current frame. The frame is created when that
+        sentence is seen, before its data is stored, and its time is taken from that sentence.
+        A later RMC or GGA with the same timestamp does not start a new frame. All other
+        sentences (GSA, GSV, ...) and IMU values belong to the current frame until the next
+        timestamp change. Data that arrives before the very first RMC or GGA cannot be
+        attributed to any epoch; it is written into a placeholder frame that is not stored in
+        self.frames and is discarded. Sentences of an epoch that arrive before its first
+        RMC or GGA (e.g. GSA first) would be attributed to the previous epoch.
+        """
         time.sleep(0.001)
 
         try:
-            # TODO: NMEA message is starting a new date time code. Create a new IMU object
-            if self.current != self.old:
-                logging.debug(f'A New frame {len(self.frames)}')
-                self.new_frame = sen.Sensors()
-                l.acquire()
-                self.frames.appendleft(self.new_frame)
-                l.release()
-
-                self.old = self.current
-                # yield
-                if len(self.frames) > self.NUMQUEELEMENTS:
-                    logging.debug('popping')
-                    l.acquire()
-                    self.frames.pop()
-                    l.release()
-
             logging.debug(len(self.frames))
             # this is blocking.  It waits until a message is received.
             message, address = self.connection_mgr.m_socket.recvfrom(8192)
@@ -120,12 +140,16 @@ class Parser(sen.Sensors):
                         # Cellphone insert own messages. Eleminate these sentences
                         if not any(msg_nmea_str.find(s) >= 0 for s in self.new_frame.NMEA_IGNORE_PREFIXES):
                             parser = pynmea2.parse(msg_nmea_str)
-                            print('parser: ', parser.name_to_idx)
+                            logging.debug(f'parser: {parser.name_to_idx}')
                             ident = parser.identifier().strip(',')  # Use the identifier to chose GPS or GLONASS
 
+                            if (type(parser) in (pynmea2.types.talker.RMC, pynmea2.types.talker.GGA)
+                                    and self._is_new_epoch(parser.timestamp)):
+                                self._start_frame(l)
+                                self.current = parser.timestamp
+                                self.new_frame.set_time(parser)
+
                             if type(parser) is pynmea2.types.talker.RMC:
-                                if type(parser) is pynmea2.types.talker.RMC:
-                                    self.current = parser.timestamp
                                 # print("msg.name_to_idx: ", msg.name_to_idx)
                                 self.new_frame.set_time(parser)
                                 # self.new_frame.time = parser.timestamp
@@ -156,28 +180,34 @@ class Parser(sen.Sensors):
                         self.new_frame.acceleration_x = a[0]
                         self.new_frame.acceleration_y = a[1]
                         self.new_frame.acceleration_z = a[2]
+                        self._append_imu_sample(self.new_frame.accel_samples, 'accelerometer',
+                                                msg_list[0], a)
 
                     if 4 == int(msg_list[n]):
                         g = msg_list[n + 1:n + 4]
                         self.new_frame.gyr_x = g[0]
                         self.new_frame.gyr_y = g[1]
                         self.new_frame.gyr_z = g[2]
+                        self._append_imu_sample(self.new_frame.gyro_samples, 'gyroscope',
+                                                msg_list[0], g)
 
                     if 5 == int(msg_list[n]):
                         m = msg_list[n + 1:n + 4]
                         self.new_frame.dir_x = m[0]
                         self.new_frame.dir_y = m[1]
                         self.new_frame.dir_z = m[2]
+                        self._append_imu_sample(self.new_frame.mag_samples, 'magnetometer',
+                                                msg_list[0], m)
 
                     n = n + 4  # update substring position here
 
                     if len(self.sensors) > 0:
-                        print("Data!")
+                        logging.debug("Data!")
 
         except (KeyboardInterrupt, SystemExit):
-            raise print(f'Exception msg: {msg}')
-        except:
-            traceback.print_exc()
+            raise
+        except Exception:
+            logging.exception('Failed to receive or parse a message on port %s', self.port)
 
 
 if __name__ == "__main__":
