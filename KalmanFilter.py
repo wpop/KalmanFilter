@@ -27,7 +27,6 @@ class Rover:
         self.name = name
         self.rover = data.Sensors()
         self.parser = prs.Parser(self.port)
-        self.filter = Filter()
         self.object = []
 
     def run_kalman(self, lock):
@@ -98,7 +97,6 @@ class Stationary:
         self.name = name
         self.base = data.Sensors()
         self.parser = prs.Parser(self.port)
-        self.myfilter = Filter()
         self.object = []
 
     def output(self, data):
@@ -150,77 +148,6 @@ class Stationary:
         # self.start()
         # self.t.start(self)
         # self.t.setDaemon(True)
-
-
-class Filter:
-    """TODO: in this class we compute position by using Kalman Filter"""
-    def __init__(self):
-        self.Xk = None  # System state vector
-        self.Fk = None  # State-transition model
-        self.Bk = None  # Control-input mode
-        self.uk = None  # Control Vector
-        self.Hk = None  # Observation model
-        self.Rk = None  # Covariance of observation noise
-        self.Qk = None  # Covariance of noise process
-
-    def get_data(self, obj):
-        pass
-
-    def set_state_vector(self, x, y, vx, vy):
-        """Establishe Xk -- X, Y coordinates and X', Y' velocities"""
-        self.Xk = np.array(x, y, vx, vy).reshape(4, 1)  # vertical
-
-    def set_transition_matrix(self, vel: float):
-        self.Fk = np.eye(4, 4)
-        self.Fk[0][2] = vel
-        self.Fk[1][3] = vel
-
-    def set_control_matrix(self, vel: float, acc: float):
-        self.Bk = np.zeros((4, 2))
-        self.Bk[0][0] = acc
-        self.Bk[1][1] = acc
-        self.Bk[2][0] = vel
-        self.Bk[3][1] = vel
-
-    def set_control_vector(self, acc: np.array):
-        self.uk = np.zeros((2, 1))
-        self.uk[0] = acc[0]
-        self.uk[1] = acc[1]
-
-    def observation_model(self, flag_signal: bool):
-        if flag_signal == True:
-            self.Hk = np.eye(4, 4)
-        else:
-            self.Hk = np.eye(2, 4)
-
-    def set_covariance_matrix(self, sigma_pos: float, sigma_vel: bool, vel_flag: bool):
-        if vel_flag == True:
-            self.Rk = np.eye(4, 4) * sigma_pos
-        else:
-            self.Rk = np.eye(4, 4)
-            self.Rk[0][0] = sigma_pos
-            self.Rk[1][1] = sigma_pos
-            self.Rk[2][2] = sigma_vel
-            self.Rk[3][3] = sigma_vel
-
-    def set_covariance_noise(self, sigma_acc: np.array, delta_time: float):
-        sigma_vel_x = sigma_acc[0] * delta_time
-        sigma_vel_y = sigma_acc[1] * delta_time
-
-        sigma_pos_x = sigma_acc[0] * np.power(delta_time, 2) * 0.5
-        sigma_pos_y = sigma_acc[1] * np.power(delta_time, 2) * 0.5
-
-        self.Qk = np.eye(4, 4)
-
-        self.Qk[0][0] = np.power(sigma_pos_x, 2)
-        self.Qk[0][2] = sigma_pos_x * sigma_vel_x
-        self.Qk[1][1] = np.power(sigma_pos_y, 2)
-        self.Qk[1][3] = sigma_pos_y * sigma_vel_y
-        self.Qk[2][2] = np.power(sigma_vel_x, 2)
-        self.Qk[3][3] = np.power(sigma_vel_y, 2)
-
-    def proceed(self):
-        pass
 
 
 rover = Rover("Rover")
