@@ -151,11 +151,6 @@ def _split_epoch_packets(epoch: Epoch) -> list:
             build_packet(sentences[2:], epoch.accel, epoch.gyro, epoch.mag)]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known bug: a new frame is created at the start of parser_gps from the RMC time of the "
-    "previous packet, so frames lag by one packet. When an epoch spans two packets, its "
-    "second packet (GSA/IMU) is written into the next epoch's frame, and a trailing empty "
-    "frame is created."))
 def test_epoch_split_across_two_packets_stays_in_one_frame(parser, caplog):
     feed(parser, _split_epoch_packets(EPOCH_1) + _split_epoch_packets(EPOCH_2), caplog)
 
@@ -167,3 +162,53 @@ def test_epoch_split_across_two_packets_stays_in_one_frame(parser, caplog):
         assert frame.hdop == epoch.hdop
         assert (frame.acceleration_x, frame.acceleration_y, frame.acceleration_z) == epoch.accel
         assert (frame.gyr_x, frame.gyr_y, frame.gyr_z) == epoch.gyro
+
+
+def _sentences(epoch: Epoch) -> dict:
+    """Sentences of one epoch by name."""
+    return {
+        "RMC": f"GPRMC,{epoch.hhmmss}.00,A,{epoch.lat_nmea},N,{epoch.lon_nmea},E,{epoch.speed_knots},90.0,121026,,,A",
+        "GGA": f"GPGGA,{epoch.hhmmss}.00,{epoch.lat_nmea},N,{epoch.lon_nmea},E,1,08,0.9,{epoch.altitude},M,14.0,M,,",
+        "GSA": f"GPGSA,A,3,01,02,03,,,,,,,,,,{epoch.pdop},{epoch.hdop},{epoch.vdop}",
+        "GSV": "GPGSV,1,1,02,01,40,083,46,02,17,308,41",
+    }
+
+
+def _packets(epoch: Epoch, layout: Sequence[Sequence[str]]) -> list:
+    """
+    Build packets for one epoch. Each layout entry is the list of sentence names for one packet;
+    the real IMU values travel in the last packet, earlier packets carry zeros.
+    """
+    sentences = _sentences(epoch)
+    zeros = ("0", "0", "0")
+    packets = []
+    for index, names in enumerate(layout):
+        last = index == len(layout) - 1
+        packets.append(build_packet([sentences[n] for n in names],
+                                    epoch.accel if last else zeros,
+                                    epoch.gyro if last else zeros,
+                                    epoch.mag if last else zeros))
+    return packets
+
+
+@pytest.mark.parametrize("layout", [
+    pytest.param([["GGA", "GSA", "RMC", "GSV"]], id="gga-gsa-rmc-one-packet"),
+    pytest.param([["GGA", "GSA"], ["RMC", "GSV"]], id="gga-gsa-rmc-two-packets"),
+    pytest.param([["RMC", "GGA", "GSA", "GSV"]], id="rmc-gga-one-packet"),
+])
+def test_frames_are_consistent_for_any_timestamped_sentence_order(parser, caplog, layout):
+    packets = _packets(EPOCH_1, layout) + _packets(EPOCH_2, layout)
+    feed(parser, packets, caplog)
+
+    assert len(parser.frames) == 2
+    newest, oldest = parser.frames[0], parser.frames[1]
+    for frame, epoch, lat, lon, second in ((oldest, EPOCH_1, LAT_1, LON_1, 0),
+                                           (newest, EPOCH_2, LAT_2, LON_2, 1)):
+        assert frame.time == datetime.time(12, 0, second, tzinfo=UTC)
+        assert frame.latitude == lat
+        assert frame.longitude == lon
+        assert frame.altitude == epoch.altitude
+        assert frame.hdop == epoch.hdop
+        assert (frame.acceleration_x, frame.acceleration_y, frame.acceleration_z) == epoch.accel
+        assert (frame.gyr_x, frame.gyr_y, frame.gyr_z) == epoch.gyro
+        assert (frame.dir_x, frame.dir_y, frame.dir_z) == epoch.mag

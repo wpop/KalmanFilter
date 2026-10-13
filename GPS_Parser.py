@@ -76,27 +76,41 @@ class Parser(sen.Sensors):
                 f'end deque indx {indx} : port {self.port} <--------------------------------\n'
             print(s)
 
+    def _is_new_epoch(self, timestamp):
+        """True if a sentence timestamp differs from the one of the current frame."""
+        return timestamp is not None and (not self.frames or timestamp != self.current)
+
+    def _start_frame(self, l):
+        """Create a new frame, make it the current one and trim the queue to its size limit."""
+        logging.debug(f'A New frame {len(self.frames)}')
+        self.new_frame = sen.Sensors()
+        l.acquire()
+        self.frames.appendleft(self.new_frame)
+        l.release()
+
+        if len(self.frames) > self.NUMQUEELEMENTS:
+            logging.debug('popping')
+            l.acquire()
+            self.frames.pop()
+            l.release()
+
     def parser_gps(self, l):
-        """from NMEA-message we extract a new date time and creates a new IMU object"""
+        """
+        Receive one UDP packet and write its sentences and IMU values into the current frame.
+
+        Assumption: a frame starts with the first sentence that carries a timestamp (RMC or GGA)
+        that differs from the timestamp of the current frame. The frame is created when that
+        sentence is seen, before its data is stored, and its time is taken from that sentence.
+        A later RMC or GGA with the same timestamp does not start a new frame. All other
+        sentences (GSA, GSV, ...) and IMU values belong to the current frame until the next
+        timestamp change. Data that arrives before the very first RMC or GGA cannot be
+        attributed to any epoch; it is written into a placeholder frame that is not stored in
+        self.frames and is discarded. Sentences of an epoch that arrive before its first
+        RMC or GGA (e.g. GSA first) would be attributed to the previous epoch.
+        """
         time.sleep(0.001)
 
         try:
-            # TODO: NMEA message is starting a new date time code. Create a new IMU object
-            if self.current != self.old:
-                logging.debug(f'A New frame {len(self.frames)}')
-                self.new_frame = sen.Sensors()
-                l.acquire()
-                self.frames.appendleft(self.new_frame)
-                l.release()
-
-                self.old = self.current
-                # yield
-                if len(self.frames) > self.NUMQUEELEMENTS:
-                    logging.debug('popping')
-                    l.acquire()
-                    self.frames.pop()
-                    l.release()
-
             logging.debug(len(self.frames))
             # this is blocking.  It waits until a message is received.
             message, address = self.connection_mgr.m_socket.recvfrom(8192)
@@ -123,9 +137,14 @@ class Parser(sen.Sensors):
                             print('parser: ', parser.name_to_idx)
                             ident = parser.identifier().strip(',')  # Use the identifier to chose GPS or GLONASS
 
+                            if (type(parser) in (pynmea2.types.talker.RMC, pynmea2.types.talker.GGA)
+                                    and self._is_new_epoch(parser.timestamp)):
+                                self._start_frame(l)
+                                self.old = self.current
+                                self.current = parser.timestamp
+                                self.new_frame.set_time(parser)
+
                             if type(parser) is pynmea2.types.talker.RMC:
-                                if type(parser) is pynmea2.types.talker.RMC:
-                                    self.current = parser.timestamp
                                 # print("msg.name_to_idx: ", msg.name_to_idx)
                                 self.new_frame.set_time(parser)
                                 # self.new_frame.time = parser.timestamp
