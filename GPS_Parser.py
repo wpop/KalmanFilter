@@ -1,5 +1,4 @@
 import collections
-import traceback
 import pynmea2
 # import threading
 import time
@@ -43,7 +42,8 @@ class Parser(sen.Sensors):
         # traceback.print_exc()
         l.release()
         # Remove the current working frame (new_frame) since it contains incomplete data.
-        fix_data.popleft()
+        if fix_data:
+            fix_data.popleft()
         logging.debug(f'Get Data? {len(self.frames)}')
         return fix_data
 
@@ -175,9 +175,9 @@ class Parser(sen.Sensors):
                         print("Data!")
 
         except (KeyboardInterrupt, SystemExit):
-            raise print(f'Exception msg: {msg}')
-        except:
-            traceback.print_exc()
+            raise
+        except Exception:
+            logging.exception('Failed to receive or parse a message on port %s', self.port)
 
 
 if __name__ == "__main__":
